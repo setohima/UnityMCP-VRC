@@ -7,6 +7,7 @@ export interface LogEntry {
   timestamp: string;
 }
 
+// Legacy interfaces for backwards compatibility
 export interface ToolDefinition {
   name: string;
   description: string;
