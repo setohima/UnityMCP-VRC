@@ -16,7 +16,7 @@ interface GetLogsArgs {
 export function getLogs(
   args: GetLogsArgs,
   logBuffer: LogEntry[]
-): { content: { type: string; text: string }[] } {
+): { content: { type: "text"; text: string }[] } {
   const options = {
     types: args?.types,
     count: args?.count || 100,
@@ -31,7 +31,7 @@ export function getLogs(
   return {
     content: [
       {
-        type: "text",
+        type: "text" as const,
         text: JSON.stringify(logs, null, 2),
       },
     ],

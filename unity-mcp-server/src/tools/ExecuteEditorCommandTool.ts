@@ -37,13 +37,13 @@ export function resolveCommandResult(result: CommandResult): void {
 export async function executeEditorCommand(
   code: string,
   unityConnection: UnityConnection
-): Promise<{ content: { type: string; text: string }[] }> {
+): Promise<{ content: { type: "text"; text: string }[] }> {
   // Validate code parameter
   if (!code || typeof code !== "string" || code.trim().length === 0) {
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify({
             error: "The code parameter is required and cannot be empty",
             status: "error",
@@ -88,7 +88,7 @@ export async function executeEditorCommand(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify(
             {
               result,
@@ -120,7 +120,7 @@ export async function executeEditorCommand(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify({
             error: `Failed to execute command: ${errorMessage}`,
             status: "error",

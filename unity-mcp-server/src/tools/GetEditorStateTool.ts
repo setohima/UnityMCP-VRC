@@ -34,14 +34,14 @@ export function resolveUnityEditorState(result: UnityEditorState): void {
 export async function getEditorState(
   format: string,
   unityConnection: UnityConnection
-): Promise<{ content: { type: string; text: string }[] }> {
+): Promise<{ content: { type: "text"; text: string }[] }> {
   const validFormats = ["Raw"];
 
   if (format && !validFormats.includes(format)) {
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify({
             error: `Invalid format: "${format}". Valid formats are: ${validFormats.join(", ")}`,
             status: "error",
@@ -87,7 +87,7 @@ export async function getEditorState(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify(responseData, null, 2),
         },
       ],
@@ -102,7 +102,7 @@ export async function getEditorState(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: JSON.stringify({
             error: `Failed to get editor state: ${errorMessage}`,
             status: "error",
