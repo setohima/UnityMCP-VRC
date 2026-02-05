@@ -1,43 +1,35 @@
 #!/usr/bin/env node
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { UnityConnection } from "./communication/UnityConnection.js";
 import { getAllResources, ResourceContext } from "./resources/index.js";
-import { getAllTools, ToolContext } from "./tools/index.js";
+import { LogEntry } from "./tools/types.js";
+
+// Tool Implementations
+import { executeEditorCommand, CommandResult, resolveCommandResult } from "./tools/ExecuteEditorCommandTool.js";
+import { getEditorState, UnityEditorState, resolveUnityEditorState } from "./tools/GetEditorStateTool.js";
+import { getLogs } from "./tools/GetLogsTool.js";
+
+// Re-export for UnityConnection
+export { resolveCommandResult, resolveUnityEditorState };
 
 class UnityMCPServer {
-  private server: Server;
+  private server: McpServer;
   private unityConnection: UnityConnection;
   private initialized = false;
 
   constructor() {
     // Initialize MCP Server
-    this.server = new Server(
-      {
-        name: "unity-mcp-server",
-        version: "0.1.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-          resources: {},
-        },
-      },
-    );
+    this.server = new McpServer({
+      name: "unity-mcp-server",
+      version: "0.2.0",
+    });
 
     // Initialize WebSocket Server for Unity communication
     this.unityConnection = new UnityConnection(8080);
 
     // Error handling
-    this.server.onerror = (error) => console.error("[MCP Error]", error);
     process.on("SIGINT", async () => {
       await this.cleanup();
       process.exit(0);
@@ -47,10 +39,10 @@ class UnityMCPServer {
   /** Initialize the server asynchronously */
   async initialize() {
     if (this.initialized) return;
-    
+
     await this.setupResources();
     this.setupTools();
-    
+
     this.initialized = true;
   }
 
@@ -58,108 +50,101 @@ class UnityMCPServer {
   private async setupResources() {
     const resources = await getAllResources();
 
-    // Set up the resource request handler
-    this.server.setRequestHandler(
-      ListResourcesRequestSchema,
-      async (request) => {
-        return {
-          resources: resources.map((resource) => resource.getDefinition()),
-        };
-      },
-    );
-
-    // Read resource contents
-    this.server.setRequestHandler(
-      ReadResourceRequestSchema,
-      async (request) => {
-        const uri = request.params.uri;
-        const resource = resources.find((r) => r.getDefinition().uri === uri);
-
-        if (!resource) {
-          throw new McpError(
-            ErrorCode.MethodNotFound,
-            `Resource not found: ${uri}. Available resources: ${resources
-              .map((r) => r.getDefinition().uri)
-              .join(", ")}`,
-          );
+    // Register each resource
+    for (const resource of resources) {
+      const def = resource.getDefinition();
+      this.server.resource(
+        def.name,
+        def.uri,
+        {
+          description: def.description,
+          mimeType: def.mimeType,
+        },
+        async (uri) => {
+          const resourceContext: ResourceContext = {
+            unityConnection: this.unityConnection,
+          };
+          const content = await resource.getContents(resourceContext);
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: def.mimeType,
+                text: content,
+              },
+            ],
+          };
         }
-
-        const resourceContext: ResourceContext = {
-          unityConnection: this.unityConnection,
-          // Add any other context properties needed
-        };
-
-        const content = await resource.getContents(resourceContext);
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: resource.getDefinition().mimeType,
-              text: content,
-            },
-          ],
-        };
-      },
-    );
+      );
+    }
   }
 
   private setupTools() {
-    const tools = getAllTools();
+    const unityConnection = this.unityConnection;
 
-    // List available tools with comprehensive documentation
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: tools.map((tool) => tool.getDefinition()),
-    }));
-
-    // Handle tool calls with enhanced validation and error handling
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
-
-      // Find the requested tool
-      const tool = tools.find((t) => t.getDefinition().name === name);
-
-      // Validate tool exists with helpful error message
-      if (!tool) {
-        const availableTools = tools.map((t) => t.getDefinition().name);
-        throw new McpError(
-          ErrorCode.MethodNotFound,
-          `Unknown tool: ${name}. Available tools are: ${availableTools.join(
-            ", ",
-          )}`,
-        );
+    // Register execute_editor_command tool
+    this.server.tool(
+      "execute_editor_command",
+      "Execute arbitrary C# code file within the Unity Editor context. This powerful tool allows for direct manipulation of the Unity Editor, GameObjects, components, and project assets using the Unity Editor API.",
+      {
+        code: z.string().min(1).describe(
+          `C# code file to execute in the Unity Editor context.
+The code has access to all UnityEditor and UnityEngine APIs.
+Include any necessary using directives at the top of the code.
+The code must have a EditorCommand class with a static Execute method that returns an object.`
+        ),
+      },
+      async ({ code }) => {
+        return await executeEditorCommand(code, unityConnection);
       }
+    );
 
-      // Try executing with retry logic for connection issues
-      let retryCount = 0;
-      const maxRetries = 5;
-      const retryDelay = 5000; // 5 seconds
-
-      while (true) {
-        // Verify Unity connection with detailed error message
-        if (!this.unityConnection.isConnected()) {
-          if (retryCount < maxRetries) {
-            retryCount++;
-            console.error(`Unity Editor not connected. Retrying in 5 seconds... (${retryCount}/${maxRetries})`);
-            await new Promise(resolve => setTimeout(resolve, retryDelay));
-            continue;
-          }
-          throw new McpError(
-            ErrorCode.InternalError,
-            "Unity Editor is not connected. Please ensure the Unity Editor is running and the UnityMCP window is open.",
-          );
-        }
-
-        // Create context object for tool execution
-        const toolContext: ToolContext = {
-          unityConnection: this.unityConnection,
-          logBuffer: this.unityConnection.getLogBuffer(),
-        };
-
-        // Execute the tool
-        return await tool.execute(args, toolContext);
+    // Register get_editor_state tool
+    this.server.tool(
+      "get_editor_state",
+      "Retrieve the current state of the Unity Editor, including active GameObjects, selection state, play mode status, scene hierarchy, project structure, and assets. This tool provides a comprehensive snapshot of the editor's current context.",
+      {
+        format: z.enum(["Raw"]).default("Raw").optional().describe(
+          "Specify the output format: Raw: Complete editor state including all available data"
+        ),
+      },
+      async ({ format }) => {
+        return await getEditorState(format || "Raw", unityConnection);
       }
-    });
+    );
+
+    // Register get_logs tool
+    this.server.tool(
+      "get_logs",
+      "Retrieve and filter Unity Editor logs with comprehensive filtering options. This tool provides access to editor logs, console messages, warnings, errors, and exceptions with powerful filtering capabilities.",
+      {
+        types: z.array(z.enum(["Log", "Warning", "Error", "Exception"])).optional().describe(
+          "Filter logs by type. If not specified, all types are included."
+        ),
+        count: z.number().min(1).max(1000).default(100).optional().describe(
+          "Maximum number of log entries to return"
+        ),
+        fields: z.array(z.enum(["message", "stackTrace", "logType", "timestamp"])).optional().describe(
+          "Specify which fields to include in the output."
+        ),
+        messageContains: z.string().min(1).optional().describe(
+          "Filter logs to only include entries where the message contains this string (case-sensitive)"
+        ),
+        stackTraceContains: z.string().min(1).optional().describe(
+          "Filter logs to only include entries where the stack trace contains this string (case-sensitive)"
+        ),
+        timestampAfter: z.string().optional().describe(
+          "Filter logs after this ISO timestamp (inclusive)"
+        ),
+        timestampBefore: z.string().optional().describe(
+          "Filter logs before this ISO timestamp (inclusive)"
+        ),
+      },
+      async (args) => {
+        const logBuffer = unityConnection.getLogBuffer();
+        return getLogs(args, logBuffer);
+      }
+    );
   }
 
   private async cleanup() {
@@ -169,7 +154,7 @@ class UnityMCPServer {
 
   async run() {
     await this.initialize();
-    
+
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     console.error("Unity MCP server running on stdio");

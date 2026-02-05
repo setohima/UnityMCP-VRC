@@ -1,14 +1,4 @@
-import { ExecuteEditorCommandTool } from "./ExecuteEditorCommandTool.js";
-import { GetEditorStateTool } from "./GetEditorStateTool.js";
-import { GetLogsTool } from "./GetLogsTool.js";
-import { Tool } from "./types.js";
-
 export * from "./types.js";
-
-export function getAllTools(): Tool[] {
-  return [
-    new GetEditorStateTool(),
-    new ExecuteEditorCommandTool(),
-    new GetLogsTool(),
-  ];
-}
+export { executeEditorCommand, CommandResult, resolveCommandResult } from "./ExecuteEditorCommandTool.js";
+export { getEditorState, UnityEditorState, resolveUnityEditorState } from "./GetEditorStateTool.js";
+export { getLogs } from "./GetLogsTool.js";
