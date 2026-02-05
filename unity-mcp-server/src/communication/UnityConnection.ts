@@ -2,6 +2,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import { CommandResult, resolveCommandResult } from "../tools/ExecuteEditorCommandTool.js";
 import { LogEntry } from "../tools/index.js";
 import { resolveUnityEditorState, UnityEditorState } from "../tools/GetEditorStateTool.js";
+import { resolveObjectDetails } from "../tools/GetObjectDetailsTool.js";
+import { resolveScreenshot } from "../tools/TakeScreenshotTool.js";
 
 export class UnityConnection {
   private wsServer: WebSocketServer;
@@ -64,6 +66,14 @@ export class UnityConnection {
 
       case "editorState":
         resolveUnityEditorState(message.data as UnityEditorState);
+        break;
+
+      case "objectDetails":
+        resolveObjectDetails(message.data);
+        break;
+
+      case "screenshot":
+        resolveScreenshot(message.data);
         break;
 
       case "log":

@@ -10,6 +10,8 @@ import { LogEntry } from "./tools/types.js";
 import { executeEditorCommand, CommandResult, resolveCommandResult } from "./tools/ExecuteEditorCommandTool.js";
 import { getEditorState, UnityEditorState, resolveUnityEditorState } from "./tools/GetEditorStateTool.js";
 import { getLogs } from "./tools/GetLogsTool.js";
+import { getObjectDetails } from "./tools/GetObjectDetailsTool.js";
+import { takeScreenshot } from "./tools/TakeScreenshotTool.js";
 
 // Re-export for UnityConnection
 export { resolveCommandResult, resolveUnityEditorState };
@@ -143,6 +145,30 @@ The code must have a EditorCommand class with a static Execute method that retur
       async (args) => {
         const logBuffer = unityConnection.getLogBuffer();
         return getLogs(args, logBuffer);
+      }
+    );
+
+    // Register get_object_details tool
+    this.server.tool(
+      "get_object_details",
+      "Retrieve detailed information about a GameObject, including its transform, tag, layer, and all attached components with their public fields and properties.",
+      {
+        objectName: z.string().min(1).describe(
+          "The name of the GameObject to inspect. Must be exact name in the scene."
+        ),
+      },
+      async ({ objectName }) => {
+        return await getObjectDetails(objectName, unityConnection);
+      }
+    );
+
+    // Register take_screenshot tool
+    this.server.tool(
+      "take_screenshot",
+      "Capture a screenshot of the current Unity Editor Game View. Returns the image as a base64 encoded string or image artifact.",
+      {},
+      async () => {
+        return await takeScreenshot(unityConnection);
       }
     );
   }

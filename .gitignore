@@ -37,6 +37,7 @@ dist/
 .idea/
 *.sublime-workspace
 *.sublime-project
+.agent/
 
 # OS generated
 .DS_Store

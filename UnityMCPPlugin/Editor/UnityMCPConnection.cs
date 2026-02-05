@@ -24,6 +24,8 @@ namespace UnityMCP.Editor
         private static readonly int maxLogBufferSize = 1000;
         private static bool isLoggingEnabled = true;
         private static EditorStateReporter editorStateReporter;
+        private static InspectorDataReporter inspectorDataReporter;
+        private static ScreenshotCapturer screenshotCapturer;
 
         // Public properties for the debug window
         public static bool IsConnected => isConnected;
@@ -173,6 +175,8 @@ namespace UnityMCP.Editor
                 
                 // Initialize editor state reporter
                 editorStateReporter = new EditorStateReporter();
+                inspectorDataReporter = new InspectorDataReporter();
+                screenshotCapturer = new ScreenshotCapturer();
             }
             catch (OperationCanceledException)
             {
@@ -266,6 +270,12 @@ namespace UnityMCP.Editor
                         break;
                     case "getEditorState":
                         await editorStateReporter.SendEditorState(webSocket, cts.Token);
+                        break;
+                    case "getGameObjectDetails":
+                        await inspectorDataReporter.SendObjectDetails(webSocket, cts.Token, data["data"].ToString());
+                        break;
+                    case "takeScreenshot":
+                        await screenshotCapturer.SendScreenshot(webSocket, cts.Token);
                         break;
                 }
             }
