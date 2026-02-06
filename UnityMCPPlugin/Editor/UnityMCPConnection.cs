@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using Newtonsoft.Json;
 using Microsoft.CSharp;
@@ -24,6 +25,10 @@ namespace UnityMCP.Editor
         private static readonly int maxLogBufferSize = 1000;
         private static bool isLoggingEnabled = true;
         private static EditorStateReporter editorStateReporter;
+        private static InspectorDataReporter inspectorDataReporter;
+        private static ScreenshotCapturer screenshotCapturer;
+        private static SceneManipulator sceneManipulator;
+        private static AssetManager assetManager;
 
         // Public properties for the debug window
         public static bool IsConnected => isConnected;
@@ -173,6 +178,10 @@ namespace UnityMCP.Editor
                 
                 // Initialize editor state reporter
                 editorStateReporter = new EditorStateReporter();
+                inspectorDataReporter = new InspectorDataReporter();
+                screenshotCapturer = new ScreenshotCapturer();
+                sceneManipulator = new SceneManipulator();
+                assetManager = new AssetManager();
             }
             catch (OperationCanceledException)
             {
@@ -266,6 +275,19 @@ namespace UnityMCP.Editor
                         break;
                     case "getEditorState":
                         await editorStateReporter.SendEditorState(webSocket, cts.Token);
+                        break;
+                    case "getGameObjectDetails":
+                        await inspectorDataReporter.SendObjectDetails(webSocket, cts.Token, data["data"].ToString());
+                        break;
+                    case "takeScreenshot":
+                        await screenshotCapturer.SendScreenshot(webSocket, cts.Token);
+                        break;
+                    case "manipulateScene":
+                        Debug.Log("[UnityMCP] Handling manipulateScene");
+                        await sceneManipulator.HandleSceneManipulation(webSocket, cts.Token, data["data"].ToString());
+                        break;
+                    case "manageAssets":
+                        await assetManager.HandleAssetManagement(webSocket, cts.Token, data["data"].ToString());
                         break;
                 }
             }

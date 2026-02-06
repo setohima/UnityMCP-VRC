@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System;
+using System.Threading.Tasks;
 
 namespace UnityMCP.Editor
 {
@@ -11,52 +12,38 @@ namespace UnityMCP.Editor
         /// </summary>
         /// <param name="timeoutSeconds">Maximum time to wait in seconds (0 means no timeout)</param>
         /// <returns>True if compilation finished, false if timed out</returns>
-        public static bool WaitForUnityCompilation(float timeoutSeconds = 60f)
+        public static async Task WaitForUnityCompilationAsync(float timeoutSeconds = 10f)
         {
             if (!EditorApplication.isCompiling)
-                return true;
+                return;
 
             Debug.Log("[UnityMCP] Waiting for Unity to finish compilation...");
 
             float startTime = Time.realtimeSinceStartup;
-            bool complete = false;
-
-            // Set up a waiter using EditorApplication.update
-            EditorApplication.CallbackFunction waiter = null;
-            waiter = () =>
+            
+            while (EditorApplication.isCompiling)
             {
-                // Check if Unity finished compiling
-                if (!EditorApplication.isCompiling)
+                if (timeoutSeconds > 0 && (Time.realtimeSinceStartup - startTime) > timeoutSeconds)
                 {
-                    EditorApplication.update -= waiter;
-                    complete = true;
-                    Debug.Log("[UnityMCP] Unity compilation completed");
-                }
-                // Check for timeout if specified
-                else if (timeoutSeconds > 0 && (Time.realtimeSinceStartup - startTime) > timeoutSeconds)
-                {
-                    EditorApplication.update -= waiter;
                     Debug.LogWarning($"[UnityMCP] Timed out waiting for Unity compilation after {timeoutSeconds} seconds");
+                    return;
                 }
-            };
-
-            EditorApplication.update += waiter;
-
-            // Force a synchronous wait since we're in an editor command context
-            while (!complete && (timeoutSeconds <= 0 || (Time.realtimeSinceStartup - startTime) <= timeoutSeconds))
-            {
-                System.Threading.Thread.Sleep(100);
-                // Process events to keep the editor responsive
-                if (EditorWindow.focusedWindow != null)
-                {
-                    EditorWindow.focusedWindow.Repaint();
-                }
+                
+                await Task.Delay(100);
             }
 
+            Debug.Log("[UnityMCP] Unity compilation completed");
+            
             // Force a small delay to ensure any final processing is complete
-            System.Threading.Thread.Sleep(500);
+            await Task.Delay(500);
+        }
 
-            return complete;
+        public static void WaitForUnityCompilation(float timeoutSeconds = 60f)
+        {
+            if (EditorApplication.isCompiling)
+            {
+                Debug.LogWarning("[UnityMCP] Unity is compiling. Synchronous wait requested but skipped to avoid deadlock.");
+            }
         }
     }
 }
