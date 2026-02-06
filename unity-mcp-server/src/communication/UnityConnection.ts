@@ -4,6 +4,8 @@ import { LogEntry } from "../tools/index.js";
 import { resolveUnityEditorState, UnityEditorState } from "../tools/GetEditorStateTool.js";
 import { resolveObjectDetails } from "../tools/GetObjectDetailsTool.js";
 import { resolveScreenshot } from "../tools/TakeScreenshotTool.js";
+import { resolveSceneManipulation } from "../tools/ManipulateSceneTool.js";
+import { resolveAssetManagement } from "../tools/ManageAssetsTool.js";
 
 export class UnityConnection {
   private wsServer: WebSocketServer;
@@ -74,6 +76,14 @@ export class UnityConnection {
 
       case "screenshot":
         resolveScreenshot(message.data);
+        break;
+
+      case "sceneManipulationResult":
+        resolveSceneManipulation(message.data);
+        break;
+
+      case "assetManagementResult":
+        resolveAssetManagement(message.data);
         break;
 
       case "log":

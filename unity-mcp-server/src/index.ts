@@ -12,6 +12,8 @@ import { getEditorState, UnityEditorState, resolveUnityEditorState } from "./too
 import { getLogs } from "./tools/GetLogsTool.js";
 import { getObjectDetails } from "./tools/GetObjectDetailsTool.js";
 import { takeScreenshot } from "./tools/TakeScreenshotTool.js";
+import { ManipulateSceneTool } from "./tools/ManipulateSceneTool.js";
+import { ManageAssetsTool } from "./tools/ManageAssetsTool.js";
 
 // Re-export for UnityConnection
 export { resolveCommandResult, resolveUnityEditorState };
@@ -170,6 +172,24 @@ The code must have a EditorCommand class with a static Execute method that retur
       async () => {
         return await takeScreenshot(unityConnection);
       }
+    );
+
+    // Register manipulate_scene tool
+    const manipulateTool = ManipulateSceneTool(unityConnection);
+    this.server.tool(
+      manipulateTool.name,
+      manipulateTool.description,
+      (manipulateTool.inputSchema as any).shape,
+      async (args: any) => await manipulateTool.handler(args) as any
+    );
+
+    // Register manage_assets tool
+    const assetsTool = ManageAssetsTool(unityConnection);
+    this.server.tool(
+      assetsTool.name,
+      assetsTool.description,
+      (assetsTool.inputSchema as any).shape,
+      async (args: any) => await assetsTool.handler(args) as any
     );
   }
 
