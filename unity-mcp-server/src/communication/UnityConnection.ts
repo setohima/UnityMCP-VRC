@@ -93,6 +93,11 @@ export class UnityConnection {
         }
         break;
 
+      case "ping":
+        // Respond to heartbeat ping with pong
+        this.sendMessage("pong", { timestamp: new Date().toISOString() });
+        break;
+
       default:
         console.error("[Unity MCP] Unknown message type:", message.type);
     }
@@ -108,7 +113,7 @@ export class UnityConnection {
 
   // Public API
   public isConnected(): boolean {
-    return this.connection !== null;
+    return this.connection !== null && this.connection.readyState === 1; // 1 = OPEN
   }
 
   public getLogBuffer(): LogEntry[] {

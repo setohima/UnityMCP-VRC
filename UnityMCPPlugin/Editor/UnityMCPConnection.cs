@@ -31,7 +31,7 @@ namespace UnityMCP.Editor
         private static AssetManager assetManager;
 
         // Public properties for the debug window
-        public static bool IsConnected => isConnected;
+        public static bool IsConnected => isConnected && webSocket != null && webSocket.State == WebSocketState.Open;
         public static Uri ServerUri => serverUri;
         public static string LastErrorMessage => lastErrorMessage;
         public static bool IsLoggingEnabled
@@ -133,6 +133,8 @@ namespace UnityMCP.Editor
             catch (Exception e)
             {
                 Debug.LogError($"[UnityMCP] Failed to send log to server: {e.Message}");
+                // Connection is likely broken, force disconnect
+                ForceDisconnect();
             }
         }
 
@@ -151,9 +153,8 @@ namespace UnityMCP.Editor
 
         private static async void ConnectToServer()
         {
-            if (webSocket != null &&
-                (webSocket.State == WebSocketState.Connecting ||
-                 webSocket.State == WebSocketState.Open))
+            // Check both flag and actual WebSocket state
+            if (IsConnected || (webSocket != null && webSocket.State == WebSocketState.Connecting))
             {
                 // Debug.Log("[UnityMCP] Already connected or connecting");
                 return;
@@ -173,6 +174,7 @@ namespace UnityMCP.Editor
 
                 await webSocket.ConnectAsync(serverUri, linkedCts.Token);
                 isConnected = true;
+                lastPongReceived = DateTime.UtcNow; // Initialize heartbeat tracking
                 Debug.Log("[UnityMCP] Successfully connected to MCP Server");
                 StartReceiving();
                 
@@ -208,9 +210,16 @@ namespace UnityMCP.Editor
         private static float reconnectTimer = 0f;
         private static readonly float reconnectInterval = 5f;
 
+        // Heartbeat settings
+        private static float heartbeatTimer = 0f;
+        private static readonly float heartbeatInterval = 10f; // Send ping every 10 seconds
+        private static DateTime lastPongReceived = DateTime.MinValue;
+        private static readonly float heartbeatTimeout = 20f; // Consider dead if no pong for 20 seconds
+
         private static void Update()
         {
-            if (!isConnected && webSocket?.State != WebSocketState.Open)
+            // Use the strict IsConnected property for reconnection logic
+            if (!IsConnected)
             {
                 reconnectTimer += Time.deltaTime;
                 if (reconnectTimer >= reconnectInterval)
@@ -218,6 +227,30 @@ namespace UnityMCP.Editor
                     Debug.Log("[UnityMCP] Attempting to reconnect...");
                     ConnectToServer();
                     reconnectTimer = 0f;
+                }
+            }
+            else
+            {
+                // Reset timer when connected
+                reconnectTimer = 0f;
+
+                // Send heartbeat ping
+                heartbeatTimer += Time.deltaTime;
+                if (heartbeatTimer >= heartbeatInterval)
+                {
+                    SendHeartbeat();
+                    heartbeatTimer = 0f;
+                }
+
+                // Check for heartbeat timeout
+                if (lastPongReceived != DateTime.MinValue)
+                {
+                    var timeSinceLastPong = (DateTime.UtcNow - lastPongReceived).TotalSeconds;
+                    if (timeSinceLastPong > heartbeatTimeout)
+                    {
+                        Debug.LogWarning("[UnityMCP] Heartbeat timeout - connection appears dead, forcing disconnect");
+                        ForceDisconnect();
+                    }
                 }
             }
         }
@@ -289,12 +322,58 @@ namespace UnityMCP.Editor
                     case "manageAssets":
                         await assetManager.HandleAssetManagement(webSocket, cts.Token, data["data"].ToString());
                         break;
+                    case "pong":
+                        // Update last pong received time
+                        lastPongReceived = DateTime.UtcNow;
+                        break;
                 }
             }
             catch (Exception e)
             {
                 Debug.LogError($"Error handling message: {e.Message}");
             }
+        }
+
+        private static async void SendHeartbeat()
+        {
+            if (!IsConnected)
+                return;
+
+            try
+            {
+                var message = JsonConvert.SerializeObject(new
+                {
+                    type = "ping",
+                    data = new { timestamp = DateTime.UtcNow }
+                });
+
+                var buffer = Encoding.UTF8.GetBytes(message);
+                await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cts.Token);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[UnityMCP] Failed to send heartbeat: {e.Message}");
+                ForceDisconnect();
+            }
+        }
+
+        private static void ForceDisconnect()
+        {
+            Debug.LogWarning("[UnityMCP] Forcing disconnect due to connection issues");
+            isConnected = false;
+            if (webSocket != null)
+            {
+                try
+                {
+                    webSocket.Abort();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[UnityMCP] Error aborting WebSocket: {e.Message}");
+                }
+                webSocket = null;
+            }
+            lastPongReceived = DateTime.MinValue;
         }
     }
 }

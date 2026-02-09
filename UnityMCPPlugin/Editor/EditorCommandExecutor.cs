@@ -57,7 +57,15 @@ namespace UnityMCP.Editor
                     });
 
                     var buffer = Encoding.UTF8.GetBytes(resultMessage);
-                    await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                    try
+                    {
+                        await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                    }
+                    catch (Exception sendEx)
+                    {
+                        Debug.LogError($"[UnityMCP] Failed to send result: {sendEx.Message}");
+                        throw; // Re-throw to be caught by outer catch
+                    }
                 }
                 catch (Exception e)
                 {
@@ -91,7 +99,15 @@ namespace UnityMCP.Editor
                     }
                 });
                 var buffer = Encoding.UTF8.GetBytes(errorMessage);
-                await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                try
+                {
+                    await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                }
+                catch (Exception sendEx)
+                {
+                    Debug.LogError($"[UnityMCP] Failed to send error result: {sendEx.Message}");
+                    // Don't throw here as we're already in error handling
+                }
             }
             finally
             {
