@@ -34,35 +34,45 @@ namespace UnityMCP.Editor
                 var code = commandObj.code;
 
                 Debug.Log($"[UnityMCP] Executing code...");
-                // Execute the code directly in the Editor context
-                try
+
+                await EditorUtilities.WaitForUnityCompilationAsync();
+
+                // Dispatch to main thread using delayCall
+                var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EditorApplication.delayCall += () =>
                 {
-                    // Execute the provided code
-                    var result = CompileAndExecute(code);
-
-                    Debug.Log($"[UnityMCP] Code executed");
-
-                    // Send back detailed execution results
-                    var resultMessage = JsonConvert.SerializeObject(new
+                    try
                     {
-                        type = "commandResult",
-                        data = new
-                        {
-                            result = result,
-                            logs = logs,
-                            errors = errors,
-                            warnings = warnings,
-                            executionSuccess = true
-                        }
-                    });
+                        // Execute the provided code on main thread
+                        var result = CompileAndExecute(code);
+                        tcs.SetResult(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetException(ex);
+                    }
+                };
 
-                    var buffer = Encoding.UTF8.GetBytes(resultMessage);
-                    await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
-                }
-                catch (Exception e)
+                var executionResult = await tcs.Task;
+
+                Debug.Log($"[UnityMCP] Code executed");
+
+                // Send back detailed execution results
+                var resultMessage = JsonConvert.SerializeObject(new
                 {
-                    throw new Exception($"Failed to execute command: {e.Message}", e);
-                }
+                    type = "commandResult",
+                    data = new
+                    {
+                        result = executionResult,
+                        logs = logs,
+                        errors = errors,
+                        warnings = warnings,
+                        executionSuccess = true
+                    }
+                });
+
+                var buffer = Encoding.UTF8.GetBytes(resultMessage);
+                await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
             }
             catch (Exception e)
             {

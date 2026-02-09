@@ -22,11 +22,29 @@ namespace UnityMCP.Editor
             {
                 if (webSocket?.State == WebSocketState.Open)
                 {
-                    var state = GetEditorState();
+                    await EditorUtilities.WaitForUnityCompilationAsync();
+
+                    // Dispatch to main thread using delayCall
+                    var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    EditorApplication.delayCall += () =>
+                    {
+                        try
+                        {
+                            var state = GetEditorState();
+                            tcs.SetResult(state);
+                        }
+                        catch (Exception ex)
+                        {
+                            tcs.SetException(ex);
+                        }
+                    };
+
+                    var result = await tcs.Task;
+
                     var message = JsonConvert.SerializeObject(new
                     {
                         type = "editorState",
-                        data = state
+                        data = result
                     });
                     var buffer = Encoding.UTF8.GetBytes(message);
                     await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
