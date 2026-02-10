@@ -7,7 +7,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using System.Linq;
 using Newtonsoft.Json;
 using Microsoft.CSharp;
@@ -31,7 +30,9 @@ namespace UnityMCP.Editor
         private static ScreenshotCapturer screenshotCapturer;
         private static SceneManipulator sceneManipulator;
         private static AssetManager assetManager;
-        private static HttpClient httpClient = new HttpClient();
+        private static HttpClient httpClient = new HttpClient() { Timeout = TimeSpan.FromSeconds(2) };
+        private static bool isSendingLog = false;
+        private static bool isConnecting = false;
 
         // Public properties for the debug window
         public static bool IsConnected => isConnected && webSocket != null && webSocket.State == WebSocketState.Open;
@@ -116,6 +117,8 @@ namespace UnityMCP.Editor
 
         private static async void SendLogToServer(LogEntry logEntry)
         {
+            if (isSendingLog) return;
+            isSendingLog = true;
             try
             {
                 var message = JsonConvert.SerializeObject(new
@@ -135,9 +138,14 @@ namespace UnityMCP.Editor
             }
             catch (Exception e)
             {
-                Debug.LogError($"[UnityMCP] Failed to send log to server: {e.Message}");
-                // Connection is likely broken, force disconnect
+                // ForceDisconnect before logging to prevent recursive loop
+                // (Debug.LogError -> HandleLogMessage -> SendLogToServer -> ...)
                 ForceDisconnect();
+                Debug.LogError($"[UnityMCP] Failed to send log to server: {e.Message}");
+            }
+            finally
+            {
+                isSendingLog = false;
             }
         }
 
@@ -158,7 +166,6 @@ namespace UnityMCP.Editor
         {
             try
             {
-                httpClient.Timeout = TimeSpan.FromSeconds(2);
                 var response = await httpClient.GetAsync(healthCheckUri);
 
                 if (response.IsSuccessStatusCode)
@@ -226,13 +233,13 @@ namespace UnityMCP.Editor
 
         private static async void ConnectToServer()
         {
-            // Check both flag and actual WebSocket state
-            if (IsConnected || (webSocket != null && webSocket.State == WebSocketState.Connecting))
+            // Prevent concurrent connection attempts (including during health check phase)
+            if (isConnecting || IsConnected)
             {
-                // Debug.Log("[UnityMCP] Already connected or connecting");
                 return;
             }
 
+            isConnecting = true;
             try
             {
                 // Perform health check before attempting WebSocket connection
@@ -251,7 +258,7 @@ namespace UnityMCP.Editor
                 webSocket = new ClientWebSocket();
                 webSocket.Options.KeepAliveInterval = TimeSpan.FromSeconds(60);
 
-                var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, timeout.Token);
 
                 await webSocket.ConnectAsync(serverUri, linkedCts.Token);
@@ -276,7 +283,7 @@ namespace UnityMCP.Editor
             {
                 lastErrorMessage = "[UnityMCP] Connection attempt timed out - Server accepted connection but didn't respond";
                 Debug.LogError(lastErrorMessage);
-                isConnected = false;
+                CleanupFailedConnection();
             }
             catch (WebSocketException we)
             {
@@ -320,7 +327,7 @@ namespace UnityMCP.Editor
                 }
 
                 Debug.LogError(lastErrorMessage);
-                isConnected = false;
+                CleanupFailedConnection();
             }
             catch (Exception e)
             {
@@ -328,43 +335,58 @@ namespace UnityMCP.Editor
                                    $"Type: {e.GetType().Name}\n" +
                                    $"Message: {e.Message}";
                 Debug.LogError(lastErrorMessage);
-                isConnected = false;
+                CleanupFailedConnection();
+            }
+            finally
+            {
+                isConnecting = false;
             }
         }
 
-        private static float reconnectTimer = 0f;
-        private static readonly float reconnectInterval = 5f;
+        private static void CleanupFailedConnection()
+        {
+            isConnected = false;
+            if (webSocket != null)
+            {
+                try
+                {
+                    webSocket.Dispose();
+                }
+                catch { }
+                webSocket = null;
+            }
+        }
+
+        private static double lastReconnectAttemptTime = 0;
+        private static readonly double reconnectInterval = 5.0;
 
         // Heartbeat settings
-        private static float heartbeatTimer = 0f;
-        private static readonly float heartbeatInterval = 10f; // Send ping every 10 seconds
+        private static double lastHeartbeatTime = 0;
+        private static readonly double heartbeatInterval = 10.0; // Send ping every 10 seconds
         private static DateTime lastPongReceived = DateTime.MinValue;
-        private static readonly float heartbeatTimeout = 20f; // Consider dead if no pong for 20 seconds
+        private static readonly double heartbeatTimeout = 20.0; // Consider dead if no pong for 20 seconds
 
         private static void Update()
         {
+            double now = EditorApplication.timeSinceStartup;
+
             // Use the strict IsConnected property for reconnection logic
             if (!IsConnected)
             {
-                reconnectTimer += Time.deltaTime;
-                if (reconnectTimer >= reconnectInterval)
+                if (now - lastReconnectAttemptTime >= reconnectInterval)
                 {
                     Debug.Log("[UnityMCP] Attempting to reconnect...");
                     ConnectToServer();
-                    reconnectTimer = 0f;
+                    lastReconnectAttemptTime = now;
                 }
             }
             else
             {
-                // Reset timer when connected
-                reconnectTimer = 0f;
-
                 // Send heartbeat ping
-                heartbeatTimer += Time.deltaTime;
-                if (heartbeatTimer >= heartbeatInterval)
+                if (now - lastHeartbeatTime >= heartbeatInterval)
                 {
                     SendHeartbeat();
-                    heartbeatTimer = 0f;
+                    lastHeartbeatTime = now;
                 }
 
                 // Check for heartbeat timeout
@@ -426,41 +448,53 @@ namespace UnityMCP.Editor
             try
             {
                 var data = JsonConvert.DeserializeObject<Dictionary<string, object>>(message);
+                if (data == null || !data.ContainsKey("type"))
+                {
+                    Debug.LogWarning($"[UnityMCP] Received invalid message (missing 'type'): {message}");
+                    return;
+                }
+
                 string messageType = data["type"].ToString();
 
                 switch (messageType)
                 {
                     case "welcome":
-                        Debug.Log($"[UnityMCP] Received welcome from server: {data["data"]}");
+                        Debug.Log($"[UnityMCP] Received welcome from server: {(data.ContainsKey("data") ? data["data"] : "")}");
                         break;
                     case "executeEditorCommand":
+                        if (!data.ContainsKey("data")) { Debug.LogWarning("[UnityMCP] executeEditorCommand missing 'data'"); break; }
                         await EditorCommandExecutor.ExecuteEditorCommand(webSocket, cts.Token, data["data"].ToString());
                         break;
                     case "getEditorState":
                         await editorStateReporter.SendEditorState(webSocket, cts.Token);
                         break;
                     case "getGameObjectDetails":
+                        if (!data.ContainsKey("data")) { Debug.LogWarning("[UnityMCP] getGameObjectDetails missing 'data'"); break; }
                         await inspectorDataReporter.SendObjectDetails(webSocket, cts.Token, data["data"].ToString());
                         break;
                     case "takeScreenshot":
                         await screenshotCapturer.SendScreenshot(webSocket, cts.Token);
                         break;
                     case "manipulateScene":
+                        if (!data.ContainsKey("data")) { Debug.LogWarning("[UnityMCP] manipulateScene missing 'data'"); break; }
                         Debug.Log("[UnityMCP] Handling manipulateScene");
                         await sceneManipulator.HandleSceneManipulation(webSocket, cts.Token, data["data"].ToString());
                         break;
                     case "manageAssets":
+                        if (!data.ContainsKey("data")) { Debug.LogWarning("[UnityMCP] manageAssets missing 'data'"); break; }
                         await assetManager.HandleAssetManagement(webSocket, cts.Token, data["data"].ToString());
                         break;
                     case "pong":
-                        // Update last pong received time
                         lastPongReceived = DateTime.UtcNow;
+                        break;
+                    default:
+                        Debug.LogWarning($"[UnityMCP] Unknown message type: {messageType}");
                         break;
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError($"Error handling message: {e.Message}");
+                Debug.LogError($"[UnityMCP] Error handling message: {e.Message}");
             }
         }
 
