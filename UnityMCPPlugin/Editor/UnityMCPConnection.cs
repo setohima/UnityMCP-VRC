@@ -173,33 +173,56 @@ namespace UnityMCP.Editor
                     var content = await response.Content.ReadAsStringAsync();
                     var healthData = JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
 
-                    Debug.Log($"[UnityMCP] Health check passed - Server version: {healthData["version"]}, Uptime: {healthData["uptime"]}s");
+                    // Only log success on initial connection or after failures
+                    if (consecutiveFailures > 0 || !hasLoggedDisconnection)
+                    {
+                        Debug.Log($"[UnityMCP] Health check passed - Server version: {healthData["version"]}, Uptime: {healthData["uptime"]}s");
+                    }
                     return true;
                 }
                 else
                 {
-                    Debug.LogWarning($"[UnityMCP] Health check returned status: {response.StatusCode}");
+                    // Only log warning on first failure
+                    if (!hasLoggedDisconnection)
+                    {
+                        Debug.LogWarning($"[UnityMCP] Health check returned status: {response.StatusCode}");
+                    }
                     return false;
                 }
             }
             catch (HttpRequestException httpEx)
             {
-                lastErrorMessage = "[UnityMCP] Cannot reach MCP Server - Server may not be running\n" +
-                                   $"Please start the MCP server with: npx unity-mcp\n" +
-                                   $"Details: {httpEx.Message}";
-                Debug.LogError(lastErrorMessage);
+                // Only log detailed error on first failure
+                if (!hasLoggedDisconnection)
+                {
+                    lastErrorMessage = "[UnityMCP] Cannot reach MCP Server - Server may not be running\n" +
+                                       $"Please start the MCP server with: npx unity-mcp\n" +
+                                       $"Details: {httpEx.Message}";
+                    Debug.LogWarning(lastErrorMessage);
+                    hasLoggedDisconnection = true;
+                }
                 return false;
             }
             catch (TaskCanceledException)
             {
-                lastErrorMessage = "[UnityMCP] Health check timed out - Server may be unresponsive";
-                Debug.LogError(lastErrorMessage);
+                // Only log on first failure
+                if (!hasLoggedDisconnection)
+                {
+                    lastErrorMessage = "[UnityMCP] Health check timed out - Server may be unresponsive";
+                    Debug.LogWarning(lastErrorMessage);
+                    hasLoggedDisconnection = true;
+                }
                 return false;
             }
             catch (Exception ex)
             {
-                lastErrorMessage = $"[UnityMCP] Health check failed: {ex.Message}";
-                Debug.LogError(lastErrorMessage);
+                // Only log on first failure
+                if (!hasLoggedDisconnection)
+                {
+                    lastErrorMessage = $"[UnityMCP] Health check failed: {ex.Message}";
+                    Debug.LogWarning(lastErrorMessage);
+                    hasLoggedDisconnection = true;
+                }
                 return false;
             }
         }
@@ -248,7 +271,12 @@ namespace UnityMCP.Editor
 
                 if (!healthCheckPassed)
                 {
-                    Debug.LogWarning("[UnityMCP] Health check failed - Skipping connection attempt");
+                    // Only log on first failure or periodically
+                    if (!hasLoggedDisconnection)
+                    {
+                        Debug.LogWarning("[UnityMCP] Health check failed - Skipping connection attempt");
+                    }
+                    consecutiveFailures++;
                     isConnected = false;
                     return;
                 }
@@ -269,6 +297,12 @@ namespace UnityMCP.Editor
 
                 isConnected = true;
                 lastPongReceived = DateTime.UtcNow; // Initialize heartbeat tracking
+
+                // Reset backoff on successful connection
+                consecutiveFailures = 0;
+                currentReconnectInterval = reconnectInterval;
+                hasLoggedDisconnection = false;
+
                 Debug.Log("[UnityMCP] Successfully connected to MCP Server");
                 StartReceiving();
 
@@ -359,6 +393,10 @@ namespace UnityMCP.Editor
 
         private static double lastReconnectAttemptTime = 0;
         private static readonly double reconnectInterval = 5.0;
+        private static double currentReconnectInterval = 5.0; // Dynamic interval with backoff
+        private static readonly double maxReconnectInterval = 30.0;
+        private static int consecutiveFailures = 0;
+        private static bool hasLoggedDisconnection = false; // Track if we've already logged disconnection
 
         // Heartbeat settings
         private static double lastHeartbeatTime = 0;
@@ -373,11 +411,20 @@ namespace UnityMCP.Editor
             // Use the strict IsConnected property for reconnection logic
             if (!IsConnected)
             {
-                if (now - lastReconnectAttemptTime >= reconnectInterval)
+                if (now - lastReconnectAttemptTime >= currentReconnectInterval)
                 {
-                    Debug.Log("[UnityMCP] Attempting to reconnect...");
+                    // Only log reconnection attempts periodically to avoid log spam
+                    if (consecutiveFailures == 0 || consecutiveFailures % 5 == 0)
+                    {
+                        Debug.Log($"[UnityMCP] Attempting to reconnect... (retry interval: {currentReconnectInterval}s)");
+                    }
+
                     ConnectToServer();
                     lastReconnectAttemptTime = now;
+
+                    // Increase reconnect interval with exponential backoff after each failed attempt
+                    // This happens in ConnectToServer when health check fails
+                    currentReconnectInterval = Math.Min(currentReconnectInterval * 1.5, maxReconnectInterval);
                 }
             }
             else
