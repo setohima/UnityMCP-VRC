@@ -34,42 +34,52 @@ namespace UnityMCP.Editor
                 var code = commandObj.code;
 
                 Debug.Log($"[UnityMCP] Executing code...");
-                // Execute the code directly in the Editor context
-                try
+
+                await EditorUtilities.WaitForUnityCompilationAsync();
+
+                // Dispatch to main thread using delayCall
+                var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EditorApplication.delayCall += () =>
                 {
-                    // Execute the provided code
-                    var result = CompileAndExecute(code);
-
-                    Debug.Log($"[UnityMCP] Code executed");
-
-                    // Send back detailed execution results
-                    var resultMessage = JsonConvert.SerializeObject(new
-                    {
-                        type = "commandResult",
-                        data = new
-                        {
-                            result = result,
-                            logs = logs,
-                            errors = errors,
-                            warnings = warnings,
-                            executionSuccess = true
-                        }
-                    });
-
-                    var buffer = Encoding.UTF8.GetBytes(resultMessage);
                     try
                     {
-                        await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                        // Execute the provided code on main thread
+                        var result = CompileAndExecute(code);
+                        tcs.SetResult(result);
                     }
-                    catch (Exception sendEx)
+                    catch (Exception ex)
                     {
-                        Debug.LogError($"[UnityMCP] Failed to send result: {sendEx.Message}");
-                        throw; // Re-throw to be caught by outer catch
+                        tcs.SetException(ex);
                     }
-                }
-                catch (Exception e)
+                };
+
+                var executionResult = await tcs.Task;
+
+                Debug.Log($"[UnityMCP] Code executed");
+
+                // Send back detailed execution results
+                var resultMessage = JsonConvert.SerializeObject(new
                 {
-                    throw new Exception($"Failed to execute command: {e.Message}", e);
+                    type = "commandResult",
+                    data = new
+                    {
+                        result = executionResult,
+                        logs = logs,
+                        errors = errors,
+                        warnings = warnings,
+                        executionSuccess = true
+                    }
+                });
+
+                var buffer = Encoding.UTF8.GetBytes(resultMessage);
+                try
+                {
+                    await webSocket.SendAsync(new ArraySegment<byte>(buffer), WebSocketMessageType.Text, true, cancellationToken);
+                }
+                catch (Exception sendEx)
+                {
+                    Debug.LogError($"[UnityMCP] Failed to send result: {sendEx.Message}");
+                    throw; // Re-throw to be caught by outer catch
                 }
             }
             catch (Exception e)

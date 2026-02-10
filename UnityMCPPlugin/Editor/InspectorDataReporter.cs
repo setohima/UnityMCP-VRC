@@ -24,18 +24,31 @@ namespace UnityMCP.Editor
             try
             {
                 var requestData = JsonConvert.DeserializeObject<GetObjectDetailsData>(dataJson);
-                object details = null;
 
-                // Unity API access must be on main thread
                 // Wait for any ongoing compilation
-                EditorUtilities.WaitForUnityCompilation();
+                await EditorUtilities.WaitForUnityCompilationAsync();
 
-                details = GetObjectDetails(requestData.objectName);
+                // Dispatch to main thread using delayCall
+                var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                EditorApplication.delayCall += () =>
+                {
+                    try
+                    {
+                        var details = GetObjectDetails(requestData.objectName);
+                        tcs.SetResult(details);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.SetException(ex);
+                    }
+                };
+
+                var result = await tcs.Task;
 
                 var message = JsonConvert.SerializeObject(new
                 {
                     type = "objectDetails",
-                    data = details
+                    data = result
                 });
 
                 var buffer = Encoding.UTF8.GetBytes(message);
