@@ -9,7 +9,21 @@ MCP resources and helper scripts which improves it's success rate in building VR
 
 This repo also has a many general improvements that work with normal Unity development. Try it out. 
 
-## Improvements 
+## Improvements
+
+### Health Check & Diagnostics
+- **HTTP Health Check Endpoint**: MCP server now provides a health check endpoint at `http://localhost:8081/health`
+  - Unity client verifies server is running before attempting WebSocket connection
+  - Returns server version, uptime, connection status, and WebSocket port
+  - Reduces confusing error messages when server is not running
+- **Detailed Error Logging**: Improved error messages with specific error codes
+  - Distinguishes between "server not running", "port in use", and "network errors"
+  - Native error code analysis for WebSocket connection failures (WSAECONNREFUSED, WSAEADDRINUSE, etc.)
+  - MCP server logs detailed error codes for port binding issues (EADDRINUSE, EACCES, EADDRNOTAVAIL)
+- **Initial Handshake Mechanism**: Unity and MCP server perform a handshake on connection
+  - Unity sends "hello" with version and platform information
+  - Server responds with "welcome" including available features
+  - Confirms bidirectional communication is functioning
 
 ### Command Execution
 - Changed how code is executed so that the LLM can define the usings, classes, and functions
